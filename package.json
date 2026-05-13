@@ -1,7 +1,7 @@
 {
   "name": "resily",
   "version": "0.1.0",
-  "description": "A TypeScript resilience library for Node.js microservices — circuit breaker, retry, timeout, and bulkhead patterns via a pluggable strategy pattern.",
+  "description": "Resilience patterns for Node.js microservices — circuit breaker, retry, timeout, and bulkhead with pluggable strategies",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -13,8 +13,34 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
+  "keywords": [
+    "circuit-breaker",
+    "resilience",
+    "retry",
+    "timeout",
+    "bulkhead",
+    "microservices",
+    "nestjs",
+    "typescript",
+    "fault-tolerance",
+    "node"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/astitvarai3110/resily"
+  },
+  "homepage": "https://github.com/astitvarai3110/resily#readme",
+  "bugs": {
+    "url": "https://github.com/astitvarai3110/resily/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "jest",
@@ -23,16 +49,6 @@
     "lint:fix": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --fix",
     "prepublishOnly": "npm run lint && npm run test && npm run build"
   },
-  "keywords": [
-    "resilience",
-    "circuit-breaker",
-    "retry",
-    "timeout",
-    "bulkhead",
-    "microservices",
-    "typescript",
-    "nestjs"
-  ],
   "author": "",
   "license": "MIT",
   "peerDependencies": {

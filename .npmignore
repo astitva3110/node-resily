@@ -1,0 +1,14 @@
+src/
+tests/
+examples/
+.github/
+.cursor/
+coverage/
+*.spec.ts
+jest.config.ts
+tsconfig.json
+tsconfig.build.json
+.eslintrc*
+.eslintignore
+*.mdc
+.gitignore
