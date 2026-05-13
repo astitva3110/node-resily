@@ -98,6 +98,28 @@ describe('CircuitBreaker — core state machine', () => {
     await cb.execute(alwaysFail).catch(() => {/* expected */});
     expect(cb.getState()).toBe('open');
   });
+
+  it('rejects a second concurrent caller while half-open probe is in flight', async () => {
+    const cb = makeInstantBreaker();
+    await tripBreaker(cb);
+    expect(cb.getState()).toBe('open');
+
+    let releaseProbe!: () => void;
+    const probe = cb.execute(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseProbe = () => resolve();
+        }),
+    );
+
+    expect(cb.getState()).toBe('half-open');
+
+    await expect(cb.execute(alwaysSucceed)).rejects.toBeInstanceOf(CircuitOpenError);
+
+    releaseProbe();
+    await probe;
+    expect(cb.getState()).toBe('closed');
+  });
 });
 
 // ── Events ─────────────────────────────────────────────────────────────────────
@@ -312,6 +334,36 @@ describe('CircuitBreaker — initializeState()', () => {
     expect(anyEvent).not.toHaveBeenCalled();
   });
 
+  it('forces closed via initializeState on an opener tripped by failures without emitting restore events itself', async () => {
+    const cb = new CircuitBreaker({
+      name: 'test',
+      breakingStrategy: new ConsecutiveFailureBreakingStrategy(2),
+      resetStrategy: new TimeBasedResetStrategy(60_000),
+    });
+
+    await cb.execute(alwaysFail).catch(() => {
+      /* expected */
+    });
+    await cb.execute(alwaysFail).catch(() => {
+      /* expected */
+    });
+
+    expect(cb.getState()).toBe('open');
+
+    const watcher = jest.fn();
+    cb.on('open', watcher);
+    cb.on('close', watcher);
+    cb.on('halfOpen', watcher);
+
+    cb.initializeState({ state: 'closed' });
+
+    expect(cb.getState()).toBe('closed');
+    expect(watcher).not.toHaveBeenCalled();
+
+    await expect(cb.execute(alwaysSucceed)).resolves.toBe('ok');
+    expect(cb.getState()).toBe('closed');
+  });
+
   it('applies only provided fields, leaving others unchanged', () => {
     const cb = new CircuitBreaker({ name: 'test' });
     cb.initializeState({ state: 'open' });
@@ -511,6 +563,13 @@ describe('CircuitBreaker — fallback', () => {
 // ── Timeout ────────────────────────────────────────────────────────────────────
 
 describe('CircuitBreaker — timeoutMs', () => {
+  it('throws RangeError when timeoutMs is zero', () => {
+    expect(
+      () =>
+        new CircuitBreaker({ name: 'test', timeoutMs: 0 }),
+    ).toThrow(RangeError);
+  });
+
   it('throws TimeoutError when action exceeds timeoutMs', async () => {
     jest.useFakeTimers();
 

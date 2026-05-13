@@ -222,6 +222,134 @@ describe('ResilienceHealth', () => {
     expect(health.getStatus('inventoryService').uptime).toBe(200);
   });
 
+  describe('getSummary() threshold boundaries', () => {
+    // Implementation: critical ⇔ opened === totalBreakers; healthy ⇔ opened === 0; else degraded.
+
+    function makeBreaker(name: string) {
+      return new CircuitBreaker({
+        name,
+        breakingStrategy: new ConsecutiveFailureBreakingStrategy(1),
+        resetStrategy: new TimeBasedResetStrategy(60_000),
+      });
+    }
+
+    it('reports healthy when 0 of 3 breakers are open', async () => {
+      const health = new ResilienceHealth();
+      health.register(makeBreaker('a')).register(makeBreaker('b')).register(makeBreaker('c'));
+
+      const summary = health.getSummary();
+      expect(summary.status).toBe('healthy');
+      expect(summary.services.filter((s) => s.state === 'OPEN')).toHaveLength(0);
+      expect(summary.healthyBreakers).toBe(3);
+    });
+
+    it('reports degraded when exactly 1 of 3 breakers is open', async () => {
+      const health = new ResilienceHealth();
+      const alpha = makeBreaker('a');
+      health.register(alpha).register(makeBreaker('b')).register(makeBreaker('c'));
+
+      await alpha.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+
+      const summary = health.getSummary();
+      expect(summary.status).toBe('degraded');
+      expect(summary.services.filter((s) => s.state === 'OPEN')).toHaveLength(1);
+      expect(summary.healthyBreakers).toBe(2);
+    });
+
+    it('reports degraded when exactly 2 of 3 breakers are open', async () => {
+      const health = new ResilienceHealth();
+      const alpha = makeBreaker('a');
+      const beta = makeBreaker('b');
+      health.register(alpha).register(beta).register(makeBreaker('c'));
+
+      await alpha.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+      await beta.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+
+      const summary = health.getSummary();
+      expect(summary.status).toBe('degraded');
+      expect(summary.services.filter((s) => s.state === 'OPEN')).toHaveLength(2);
+      expect(summary.healthyBreakers).toBe(1);
+    });
+
+    it('reports critical only when every breaker is open', async () => {
+      const health = new ResilienceHealth();
+      const alpha = makeBreaker('a');
+      const beta = makeBreaker('b');
+      const gamma = makeBreaker('c');
+      health.register(alpha).register(beta).register(gamma);
+
+      await alpha.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+      await beta.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+      expect(health.getSummary().status).toBe('degraded');
+
+      await gamma.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+      expect(health.getSummary().status).toBe('critical');
+    });
+  });
+
+  describe('getAll()', () => {
+    it('matches getStatus shape and registration order names', async () => {
+      const health = new ResilienceHealth();
+
+      const payment = new CircuitBreaker({
+        name: 'payment',
+        breakingStrategy: new ConsecutiveFailureBreakingStrategy(1),
+      });
+      const inventory = new CircuitBreaker({
+        name: 'inventory',
+        breakingStrategy: new ConsecutiveFailureBreakingStrategy(2),
+      });
+
+      jest.setSystemTime(10_000);
+      health.register(payment).register(inventory);
+
+      await payment.execute(alwaysFail).catch(() => {
+        /* expected */
+      });
+
+      const rowNames = health.getAll().map((row) => row.name);
+      expect(rowNames).toEqual(['payment', 'inventory']);
+
+      const all = health.getAll();
+      expect(all[0]).toEqual(health.getStatus('payment'));
+      expect(all[1]).toEqual(health.getStatus('inventory'));
+
+      const shapeKeys: (keyof typeof all[0])[] = [
+        'name',
+        'state',
+        'healthy',
+        'failureCount',
+        'windowStats',
+        'errorRate',
+        'uptime',
+        'lastFailureTime',
+      ];
+      for (const row of all) {
+        for (const key of shapeKeys) {
+          expect(row).toHaveProperty(key);
+        }
+        expect(row.windowStats).toMatchObject({
+          successes: expect.any(Number),
+          failures: expect.any(Number),
+          total: expect.any(Number),
+          errorRate: expect.any(Number),
+        });
+      }
+    });
+  });
+
   it('surfaces HALF_OPEN while the breaker probes mid-flight', async () => {
     const breaker = new CircuitBreaker({
       name: 'inventoryService',

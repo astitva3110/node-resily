@@ -62,6 +62,8 @@ export class CircuitBreaker extends EventEmitter {
   private _openedAt = 0;
   private _lastBreakingFailureAt = 0;
   private _isShutdown = false;
+  /** Serializes probes so at most one `execute` runs while half-open. */
+  private _halfOpenProbeInFlight = false;
   private consecutiveFailureCount = 0;
 
   private readonly _name: string;
@@ -82,6 +84,9 @@ export class CircuitBreaker extends EventEmitter {
   /** Builds a breaker with optional strategies, timeouts, and rolling-window tuning. */
   constructor(options: CircuitBreakerOptions) {
     super();
+    if (options.timeoutMs !== undefined && options.timeoutMs <= 0) {
+      throw new RangeError('timeoutMs must be a positive number');
+    }
     this._name = options.name;
     this.breakingStrategy =
       options.breakingStrategy ?? new ConsecutiveFailureBreakingStrategy(5);
@@ -143,46 +148,63 @@ export class CircuitBreaker extends EventEmitter {
       return this.resolveFallback(options?.fallback, err);
     }
 
-    const start = Date.now();
+    let halfOpenProbeLock = false;
+    if (this._state === 'half-open') {
+      if (this._halfOpenProbeInFlight) {
+        const err = new CircuitOpenError(this._name, this._openedAt);
+        this.emit('reject', err);
+        return this.resolveFallback(options?.fallback, err);
+      }
+      this._halfOpenProbeInFlight = true;
+      halfOpenProbeLock = true;
+    }
 
     try {
-      const result = await this.runAction(action);
-      const durationMs = Date.now() - start;
+      const start = Date.now();
 
-      this.breakingStrategy.afterInvoke(durationMs);
+      try {
+        const result = await this.runAction(action);
+        const durationMs = Date.now() - start;
 
-      if (!this.failureDetectionStrategy.isSuccess(result)) {
-        const error = new Error(
-          'Protected operation returned a result classified as a circuit failure.',
+        this.breakingStrategy.afterInvoke(durationMs);
+
+        if (!this.failureDetectionStrategy.isSuccess(result)) {
+          const error = new Error(
+            'Protected operation returned a result classified as a circuit failure.',
+          );
+          return this.finalizeBreakingInvocation(durationMs, error, true, options);
+        }
+
+        this.applyBreakingDecision({
+          consecutiveFailures: this.consecutiveFailureCount,
+          windowStats: this.breakingWindowSnapshot(),
+          durationMs,
+          countedAsBreakingFailure: false,
+        });
+
+        this.recordOperationalSuccess();
+        this.emit('success', result, durationMs);
+
+        return result;
+      } catch (raw: unknown) {
+        const durationMs = Date.now() - start;
+        const error = raw instanceof Error ? raw : new Error(String(raw));
+
+        this.breakingStrategy.afterInvoke(durationMs);
+
+        const countedBreakingFailure = this.failureDetectionStrategy.isFailure(error);
+
+        return this.finalizeBreakingInvocation(
+          durationMs,
+          error,
+          countedBreakingFailure,
+          options,
         );
-        return this.finalizeBreakingInvocation(durationMs, error, true, options);
       }
-
-      this.applyBreakingDecision({
-        consecutiveFailures: this.consecutiveFailureCount,
-        windowStats: this.breakingWindowSnapshot(),
-        durationMs,
-        countedAsBreakingFailure: false,
-      });
-
-      this.recordOperationalSuccess();
-      this.emit('success', result, durationMs);
-
-      return result;
-    } catch (raw: unknown) {
-      const durationMs = Date.now() - start;
-      const error = raw instanceof Error ? raw : new Error(String(raw));
-
-      this.breakingStrategy.afterInvoke(durationMs);
-
-      const countedBreakingFailure = this.failureDetectionStrategy.isFailure(error);
-
-      return this.finalizeBreakingInvocation(
-        durationMs,
-        error,
-        countedBreakingFailure,
-        options,
-      );
+    } finally {
+      if (halfOpenProbeLock) {
+        this._halfOpenProbeInFlight = false;
+      }
     }
   }
 
@@ -192,6 +214,7 @@ export class CircuitBreaker extends EventEmitter {
     this._state = 'closed';
     this._openedAt = 0;
     this._lastBreakingFailureAt = 0;
+    this._halfOpenProbeInFlight = false;
     this.consecutiveFailureCount = 0;
     this.breakingStrategy.reset();
     this.buckets = CircuitBreaker.makeBuckets(this.bucketCount, this.bucketDurationMs);

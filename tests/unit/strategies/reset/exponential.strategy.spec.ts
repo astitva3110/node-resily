@@ -30,6 +30,17 @@ describe('ExponentialResetStrategy', () => {
     ).toThrow(RangeError);
   });
 
+  it('rejects multiplier of 1 (no exponential backoff)', () => {
+    expect(
+      () =>
+        new ExponentialResetStrategy({
+          initialDelayMs: 100,
+          multiplier: 1,
+          maxDelayMs: 60_000,
+        }),
+    ).toThrow(RangeError);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
   });

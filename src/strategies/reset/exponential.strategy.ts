@@ -17,7 +17,7 @@ export class ExponentialResetStrategy implements IResetStrategy {
 
   private currentDelayMs: number;
 
-  /** Validates initial delay, multiplier ≥ 1, and `maxDelayMs` ≥ initial. */
+  /** Validates initial delay, multiplier > 1, and `maxDelayMs` ≥ initial. */
   constructor(config: ExponentialResetStrategyConfig) {
     const { initialDelayMs, multiplier, maxDelayMs } = config;
 
@@ -25,8 +25,8 @@ export class ExponentialResetStrategy implements IResetStrategy {
       throw new RangeError('initialDelayMs must be non-negative');
     }
 
-    if (multiplier < 1) {
-      throw new RangeError('multiplier must be at least 1');
+    if (!Number.isFinite(multiplier) || multiplier <= 1) {
+      throw new RangeError('multiplier must be greater than 1');
     }
 
     if (maxDelayMs < initialDelayMs) {

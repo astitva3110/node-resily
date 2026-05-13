@@ -15,12 +15,12 @@ describe('CircuitBreaker + Retry integration', () => {
       breakingStrategy: new ConsecutiveFailureBreakingStrategy(3),
       resetStrategy: new TimeBasedResetStrategy(9999),
     });
-    const retry = new Retry({ maxAttempts: 2 });
+    const retry = new Retry({ maxAttempts: 3 });
 
     const callThrough = () =>
       cb.execute(() => retry.execute(() => Promise.reject(new Error('down'))));
 
-    // 3 outer calls × (1 initial + 2 retries) = 9 failures — circuit opens after 3.
+    // Each outer execute runs Retry up to 3 times; each exhaustion adds one breaker failure → open after 3 outers.
     await expect(callThrough()).rejects.toThrow();
     await expect(callThrough()).rejects.toThrow();
     await expect(callThrough()).rejects.toThrow();

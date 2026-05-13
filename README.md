@@ -276,7 +276,17 @@ A bulkhead caps how many concurrent calls may hit a fragile dependency; excess w
 
 ## NestJS
 
-Requires `experimentalDecorators` and `emitDecoratorMetadata` in `tsconfig`. Decorators wrap **one shared** primitive per decorated method on the class (same breaker for every instance—usually what you want for a singleton service).
+Requires `experimentalDecorators` and `emitDecoratorMetadata` in `tsconfig`.
+
+Each decorator installs **one** underlying primitive for that **method** on the class, and that same instance is reused for **every** instance of the class you create.
+
+- **`@WithCircuitBreaker`** — The shared `CircuitBreaker` keeps real state: failure counts, open / closed / half-open, and window stats. A failure (or trip) on **any** instance counts toward opening the circuit for **all** instances using that method. That matches how you usually run a **singleton** NestJS service: one logical dependency, one breaker.
+
+- **`@WithRetry`** — The `Retry` instance is shared, but `Retry` does **not** carry state between `execute()` calls. Each invocation of the method gets a **fresh** attempt budget from `maxAttempts`. Two different instances (or two concurrent calls) do not “use up” each other’s retries.
+
+- **`@WithTimeout`** — The `Timeout` instance is shared; each method call still **races its own** in-flight work against the configured delay. Per-call timing is independent.
+
+In short: breaker state is global to the class method; retry and timeout share the helper object but treat each call’s timing and retry loop separately.
 
 ```ts
 import { Injectable } from '@nestjs/common';
@@ -361,7 +371,7 @@ Additional tuning (rolling window used by stats and error-rate breaking): `windo
 - **No default exponential backoff** for `Retry`—bring an `IRetryStrategy` implementation.
 - The standalone **`Timeout`** class does not integrate `AbortController`; cancellation wiring lives on `CircuitBreaker`.
 - **State is in-memory** per process. Separate deployments or horizontal replicas do not share breaker state unless you add external coordination.
-- **Decorators** create one `CircuitBreaker` / `Retry` / `Timeout` per decorated method, **shared across all instances** of that class.
+- **Decorators** share one `CircuitBreaker` / `Retry` / `Timeout` **per decorated method** on the class (not per DI instance). Circuit state is shared; retry budgets and timeout races are per call — see **NestJS**.
 - **Nest / `reflect-metadata`** are optional peers; the core library does not require a framework.
 
 ## Contributing

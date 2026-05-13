@@ -63,4 +63,25 @@ describe('HttpFailureDetector', () => {
     const err = Object.assign(new Error('weird'), { status: Number.NaN });
     expect(d.isFailure(err)).toBe(true);
   });
+
+  describe('status vs statusCode precedence', () => {
+    it('prefers `status` over `statusCode` via readHttpStatus (nullish-coalesce)', () => {
+      const d = new HttpFailureDetector();
+
+      const errPrefer200 = Object.assign(new Error('mismatch'), {
+        status: 200,
+        statusCode: 500,
+      });
+      expect(d.isFailure(errPrefer200)).toBe(false);
+
+      const errPrefer500 = Object.assign(new Error('mismatch'), {
+        status: 500,
+        statusCode: 200,
+      });
+      expect(d.isFailure(errPrefer500)).toBe(true);
+
+      expect(d.isSuccess({ status: 200, statusCode: 500 })).toBe(true);
+      expect(d.isSuccess({ status: 500, statusCode: 200 })).toBe(false);
+    });
+  });
 });

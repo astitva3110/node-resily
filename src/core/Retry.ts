@@ -21,7 +21,7 @@ export class Retry {
   private readonly maxAttempts: number;
   private readonly strategy: IRetryStrategy;
 
-  /** `maxAttempts` is retry count after the first try (total tries = maxAttempts + 1). */
+  /** `maxAttempts` is the maximum number of times `action` may run (including the first try). */
   constructor(options: RetryOptions) {
     if (options.maxAttempts < 1) {
       throw new RangeError('maxAttempts must be at least 1');
@@ -30,19 +30,22 @@ export class Retry {
     this.strategy = options.strategy ?? new DefaultRetryStrategy();
   }
 
-  /** Runs `action` until success or {@link MaxRetriesExceededError}. */
+  /** Runs `action` until success, {@link MaxRetriesExceededError}, or a non-retryable error. */
   async execute<T>(action: () => Promise<T>): Promise<T> {
     let lastError: Error = new Error('Unknown error');
 
-    for (let attempt = 1; attempt <= this.maxAttempts + 1; attempt++) {
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
         return await action();
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
 
-        const isLastAttempt = attempt > this.maxAttempts;
-        if (isLastAttempt || !this.strategy.shouldRetry(lastError, attempt)) {
+        if (attempt >= this.maxAttempts) {
           break;
+        }
+
+        if (!this.strategy.shouldRetry(lastError, attempt)) {
+          throw lastError;
         }
 
         const delay = this.strategy.getDelay(attempt);
@@ -52,7 +55,7 @@ export class Retry {
       }
     }
 
-    throw new MaxRetriesExceededError(this.maxAttempts + 1, lastError);
+    throw new MaxRetriesExceededError(this.maxAttempts, lastError);
   }
 
   private sleep(ms: number): Promise<void> {
