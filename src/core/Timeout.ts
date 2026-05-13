@@ -1,21 +1,10 @@
 import { TimeoutError } from '../errors/TimeoutError';
 
-/**
- * Wraps an async operation and rejects it if it takes longer than the
- * specified duration.
- *
- * @example
- * ```ts
- * const timeout = new Timeout(5_000);
- * const result = await timeout.execute(() => slowNetworkCall());
- * ```
- */
+/** Races `action` against a fixed delay; throws {@link TimeoutError} if time elapses first. */
 export class Timeout {
   private readonly timeoutMs: number;
 
-  /**
-   * @param timeoutMs - Maximum allowed duration in milliseconds.
-   */
+  /** Positive duration in ms; invalid values throw {@link RangeError}. */
   constructor(timeoutMs: number) {
     if (timeoutMs <= 0) {
       throw new RangeError('timeoutMs must be a positive number');
@@ -23,12 +12,7 @@ export class Timeout {
     this.timeoutMs = timeoutMs;
   }
 
-  /**
-   * Executes `action` and races it against the configured timeout.
-   * Throws {@link TimeoutError} if the timeout fires first.
-   *
-   * @param action - Async factory to execute within the time limit.
-   */
+  /** Rejects with {@link TimeoutError} if `action` does not settle in time. */
   execute<T>(action: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {

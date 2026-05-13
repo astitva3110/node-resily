@@ -1,33 +1,19 @@
 import { BulkheadFullError } from '../errors/BulkheadFullError';
 
-/** Options for constructing a {@link Bulkhead}. */
+/** Options for {@link Bulkhead}. */
 export interface BulkheadOptions {
-  /** Maximum number of concurrently executing operations. */
   maxConcurrent: number;
-  /**
-   * Maximum number of operations that may wait in the queue while the
-   * bulkhead is at capacity. Defaults to `0` (no queuing — reject immediately).
-   */
   maxQueueSize?: number;
 }
 
-/**
- * Limits the number of concurrent executions to protect downstream resources.
- * Calls that exceed `maxConcurrent` are either queued (up to `maxQueueSize`)
- * or rejected immediately with a {@link BulkheadFullError}.
- *
- * @example
- * ```ts
- * const bulkhead = new Bulkhead({ maxConcurrent: 10, maxQueueSize: 20 });
- * const result = await bulkhead.execute(() => callDatabase());
- * ```
- */
+/** Limits concurrency; excess work queues up to `maxQueueSize` or rejects with {@link BulkheadFullError}. */
 export class Bulkhead {
   private readonly maxConcurrent: number;
   private readonly maxQueueSize: number;
   private running = 0;
   private readonly queue: Array<() => void> = [];
 
+  /** At least one concurrent slot; optional wait queue size (default 0 = fail fast when full). */
   constructor(options: BulkheadOptions) {
     if (options.maxConcurrent < 1) {
       throw new RangeError('maxConcurrent must be at least 1');
@@ -36,12 +22,7 @@ export class Bulkhead {
     this.maxQueueSize = options.maxQueueSize ?? 0;
   }
 
-  /**
-   * Executes `action` if a slot is available, or queues/rejects based on
-   * the configured queue size.
-   *
-   * @param action - Async factory to execute within the bulkhead.
-   */
+  /** Runs when capacity allows, queues if configured, else {@link BulkheadFullError}. */
   execute<T>(action: () => Promise<T>): Promise<T> {
     if (this.running < this.maxConcurrent) {
       return this.run(action);
@@ -58,12 +39,12 @@ export class Bulkhead {
     return Promise.reject(new BulkheadFullError(this.maxConcurrent));
   }
 
-  /** Returns the number of currently active executions. */
+  /** In-flight executions right now. */
   getRunningCount(): number {
     return this.running;
   }
 
-  /** Returns the number of operations waiting in the queue. */
+  /** Waiting callbacks when at `maxConcurrent`. */
   getQueuedCount(): number {
     return this.queue.length;
   }

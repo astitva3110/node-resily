@@ -1,20 +1,7 @@
 import { Retry } from '../core/Retry';
 import type { RetryOptions } from '../core/Retry';
 
-/**
- * Method decorator that automatically retries the decorated async method
- * on failure according to the provided {@link RetryOptions}.
- *
- * @param options - Retry configuration.
- *
- * @example
- * ```ts
- * class InventoryService {
- *   \@WithRetry({ maxAttempts: 3 })
- *   async fetchStock(sku: string): Promise<number> { ... }
- * }
- * ```
- */
+/** Retries the method with {@link Retry}; one executor per method, shared by all instances of the class. */
 export function WithRetry(options: RetryOptions): MethodDecorator {
   return function (
     _target: object,

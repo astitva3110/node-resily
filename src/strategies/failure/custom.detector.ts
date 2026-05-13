@@ -1,22 +1,13 @@
 import type { IFailureDetector } from '../../interfaces/IFailureDetectionStrategy';
 
-/**
- * Configuration for {@link CustomFailureDetector}.
- */
+/** Options for {@link CustomFailureDetector}. */
 export interface CustomFailureDetectorConfig {
-  /** Mandatory predicate that decides failures from thrown/primitive errors. */
   shouldFail: (error: unknown) => boolean;
-
-  /** Optional resolver predicate for successful outcomes. Defaults to unconditional success. */
   shouldSucceed?: (result: unknown) => boolean;
-
-  /** Friendly label for diagnostics. */
   name?: string;
 }
 
-/**
- * Thin delegation wrapper around arbitrary predicates supplied by callers.
- */
+/** Delegates to caller-supplied predicates. */
 export class CustomFailureDetector implements IFailureDetector {
   private readonly shouldFail: (error: unknown) => boolean;
 
@@ -24,21 +15,19 @@ export class CustomFailureDetector implements IFailureDetector {
 
   readonly name?: string;
 
-  /**
-   * @param config - Delegate functions.
-   */
+  /** Wires `shouldFail` / optional `shouldSucceed` / optional diagnostic `name`. */
   constructor(config: CustomFailureDetectorConfig) {
     this.shouldFail = config.shouldFail;
     this.shouldSucceed = config.shouldSucceed ?? trueFn;
     this.name = config.name;
   }
 
-  /** @inheritdoc */
+  /** Delegates to `shouldFail`. */
   isFailure(error: unknown): boolean {
     return this.shouldFail(error);
   }
 
-  /** @inheritdoc */
+  /** Delegates to `shouldSucceed`. */
   isSuccess(result: unknown): boolean {
     return this.shouldSucceed(result);
   }

@@ -1,36 +1,24 @@
 import type { IFailureDetector } from '../../interfaces/IFailureDetectionStrategy';
 
 /**
- * How {@link CompositeFailureDetector} merges decisions from delegates.
- *
- * - `ANY` — treat as failure if **any** child reports failure (`isFailure`).
- *           Success uses `ANY` symmetrically (`isSuccess`): true if **any** child succeeds.
- * - `ALL` — failure only when **every** child reports failure; success only when **every** child succeeds.
+ * `ANY`: failure if any child fails; success if any child accepts the result.
+ * `ALL`: failure / success only when every child agrees.
  */
 export type CompositeFailureMode = 'ANY' | 'ALL';
 
-/**
- * Configuration for {@link CompositeFailureDetector}.
- */
+/** Options for {@link CompositeFailureDetector}. */
 export interface CompositeFailureDetectorConfig {
-  /** Delegate detectors consulted in declaration order. */
   detectors: readonly IFailureDetector[];
-
-  /** Boolean merge strategy for delegates. */
   mode: CompositeFailureMode;
 }
 
-/**
- * Combines multiple detectors using boolean `ANY` / `ALL` composition.
- */
+/** Composes child detectors with `ANY` or `ALL` boolean merge. */
 export class CompositeFailureDetector implements IFailureDetector {
   private readonly detectors: readonly IFailureDetector[];
 
   private readonly mode: CompositeFailureMode;
 
-  /**
-   * @param config - Detector list plus merge semantics.
-   */
+  /** Requires at least one delegate and a merge mode. */
   constructor(config: CompositeFailureDetectorConfig) {
     if (config.detectors.length === 0) {
       throw new RangeError('CompositeFailureDetector requires at least one delegate');
@@ -40,7 +28,7 @@ export class CompositeFailureDetector implements IFailureDetector {
     this.mode = config.mode;
   }
 
-  /** @inheritdoc */
+  /** `ANY`: some; `ALL`: every — see {@link CompositeFailureMode}. */
   isFailure(error: unknown): boolean {
     if (this.mode === 'ANY') {
       return this.detectors.some((d) => d.isFailure(error));
@@ -48,7 +36,7 @@ export class CompositeFailureDetector implements IFailureDetector {
     return this.detectors.every((d) => d.isFailure(error));
   }
 
-  /** @inheritdoc */
+  /** Symmetric to `isFailure` for resolved payloads. */
   isSuccess(result: unknown): boolean {
     if (this.mode === 'ANY') {
       return this.detectors.some((d) => d.isSuccess(result));

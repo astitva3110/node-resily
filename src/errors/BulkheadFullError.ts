@@ -1,10 +1,7 @@
 import { ResilyError } from './ResilyError';
 
-/**
- * Thrown when the bulkhead's concurrent-execution or queue slot limit is reached.
- */
+/** Concurrent or queued capacity exhausted. */
 export class BulkheadFullError extends ResilyError {
-  /** Maximum number of concurrent executions the bulkhead allows. */
   public readonly maxConcurrent: number;
 
   constructor(maxConcurrent: number) {

@@ -1,64 +1,30 @@
-/**
- * Snapshot of rolling-window statistics supplied to breaking strategies.
- * Shape matches {@link WindowStats} from the circuit breaker core.
- */
+/** Rolling-window snapshot passed to breaking strategies (matches breaker window stats). */
 export interface BreakingWindowSnapshot {
-  /** Number of successful calls in the window. */
   successes: number;
-  /** Number of failed calls in the window. */
   failures: number;
-  /** Total calls in the window. */
   total: number;
-  /** Fraction of calls that failed — a value in [0, 1]. */
+  /** Fraction of calls that failed, in `[0, 1]`. */
   errorRate: number;
 }
 
-/**
- * Context passed to {@link IBreakingStrategy.shouldOpen} after each completed
- * invocation (and after failures have been counted into the rolling window).
- */
+/** Inputs to {@link IBreakingStrategy.shouldOpen} after each completed call and window updates. */
 export interface BreakingStrategyContext {
-  /** Consecutive counted breaking failures after this invocation's bookkeeping. */
   consecutiveFailures: number;
-  /** Aggregated rolling-window statistics. */
   windowStats: BreakingWindowSnapshot;
-  /** Elapsed milliseconds for the invocation that just finished. */
   durationMs: number;
-  /**
-   * `true` when this call was counted as a breaking failure (rolling failure counter
-   * and bucket were updated).
-   */
+  /** Whether this invocation incremented breaking-failure counters. */
   countedAsBreakingFailure: boolean;
-  /** Error from a rejected invocation; absent for successful completions. */
   error?: Error;
 }
 
-/**
- * Defines the contract for pluggable circuit-breaking logic.
- *
- * Implement this interface to provide custom logic that determines
- * when a circuit should trip to the open state.
- */
+/** Decides when the circuit should open; slow-call strategies record latency in `afterInvoke`. */
 export interface IBreakingStrategy {
-  /**
-   * Called after every invocation completes, with elapsed time. Window-based strategies
-   * may ignore this; slow-call strategies record durations here.
-   *
-   * @param durationMs - Elapsed time for the completed call.
-   */
+  /** Slow-call strategies record latency here; others may no-op. */
   afterInvoke(durationMs: number): void;
 
-  /**
-   * Returns `true` when the circuit should move to OPEN. Invoked after each call finishes
-   * and after counted failures have been applied to the rolling window.
-   *
-   * @param context - Outcome, window snapshot, and consecutive failure count.
-   */
+  /** Whether the circuit should transition to open after this invocation. */
   shouldOpen(context: BreakingStrategyContext): boolean;
 
-  /**
-   * Resets any internal state tracked by this strategy (e.g. counters, timestamps).
-   * Called by the circuit breaker when it transitions back to the closed state.
-   */
+  /** Clears strategy-local state when the breaker closes. */
   reset(): void;
 }

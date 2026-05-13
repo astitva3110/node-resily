@@ -12,151 +12,74 @@ import { DefaultFailureDetector } from '../strategies/failure/default.detector';
 import { ConsecutiveFailureBreakingStrategy } from '../strategies/breaking/ConsecutiveFailureBreakingStrategy';
 import { TimeBasedResetStrategy } from '../strategies/reset/TimeBasedResetStrategy';
 
-/** Possible states of the circuit breaker. */
+/** Breaker lifecycle state. */
 export type CircuitState = 'closed' | 'open' | 'half-open';
 
-/**
- * Snapshot of circuit breaker statistics used to seed state from external
- * storage (e.g. Redis) in serverless environments.
- */
+/** Persisted snapshot for cold-start restore (e.g. external store). */
 export interface ICircuitStats {
-  /** Current circuit state. */
   state?: CircuitState;
-  /** Number of consecutive failures at the time of the snapshot. */
   failureCount?: number;
-  /** Timestamp (ms since epoch) when the circuit last opened. */
   openedAt?: number;
 }
 
-/** Rolling-window statistics returned by {@link CircuitBreaker.getWindowStats}. */
+/** Rolling-window aggregates from {@link CircuitBreaker.getWindowStats}. */
 export interface WindowStats {
-  /** Number of successful calls recorded in the current window. */
   successes: number;
-  /** Number of failed calls recorded in the current window. */
   failures: number;
-  /** Total calls in the current window. */
   total: number;
-  /** Fraction of calls that failed — a value in [0, 1]. */
   errorRate: number;
 }
 
-/** A single time-bucket in the rolling stats window. */
 interface StatsBucket {
   startMs: number;
   successes: number;
   failures: number;
 }
 
-/** Options for constructing a {@link CircuitBreaker}. */
+/** Constructor options for {@link CircuitBreaker}. */
 export interface CircuitBreakerOptions {
-  /** Human-readable name used in error messages and observability. */
   name: string;
-  /** Strategy that decides when to open the circuit. Defaults to 5 consecutive failures. */
   breakingStrategy?: IBreakingStrategy;
-  /** Strategy that decides when to attempt recovery. Defaults to 30 s cooldown. */
   resetStrategy?: IResetStrategy;
-  /** Classifies failures and successful return values when determining circuit health. */
   failureDetectionStrategy?: IFailureDetector;
-  /**
-   * Maximum time in milliseconds an action may run before a {@link TimeoutError} is
-   * thrown and `abortController.abort()` is called.
-   */
   timeoutMs?: number;
-  /**
-   * External AbortController whose signal callers can pass to fetch/axios etc.
-   * The circuit breaker calls `abort()` when `timeoutMs` is exceeded.
-   */
   abortController?: AbortController;
-  /**
-   * When `true`, a fresh `AbortController` is created automatically whenever the
-   * circuit transitions to CLOSED or HALF_OPEN, replacing the previous controller.
-   *
-   * @default false
-   */
   autoRenewAbortController?: boolean;
-  /**
-   * Total duration of the rolling statistics window in milliseconds.
-   *
-   * @default 60_000
-   */
   windowMs?: number;
-  /**
-   * Number of time buckets the window is divided into.
-   * Each bucket covers `windowMs / bucketCount` milliseconds.
-   *
-   * @default 10
-   */
   bucketCount?: number;
 }
 
-/** Per-call options accepted by {@link CircuitBreaker.execute}. */
+/** Per-call options for {@link CircuitBreaker.execute}. */
 export interface ExecuteOptions<T> {
-  /**
-   * Fallback factory invoked whenever the action cannot complete — either because
-   * the circuit is open, the action throws, or a timeout occurs. Its return value
-   * is emitted as the `'fallback'` event payload and returned to the caller.
-   */
   fallback?: () => Promise<T>;
 }
 
 /**
- * A pluggable circuit breaker that wraps async operations and short-circuits
- * calls when a downstream dependency is unhealthy.
- *
- * Extends `EventEmitter`; subscribe to the following events:
- *
- * | Event       | Payload                          | Description                                      |
- * |-------------|----------------------------------|--------------------------------------------------|
- * | `open`      | —                                | Circuit transitioned to OPEN                     |
- * | `close`     | —                                | Circuit transitioned to CLOSED                   |
- * | `halfOpen`  | —                                | Circuit transitioned to HALF_OPEN                |
- * | `reject`    | `CircuitOpenError`               | Call rejected because circuit is OPEN            |
- * | `timeout`   | `TimeoutError`                   | Action exceeded `timeoutMs`                      |
- * | `fallback`  | `result`                         | Fallback was invoked; carries the fallback result |
- * | `success`   | `result, durationMs`             | Action completed successfully                    |
- * | `failure`   | `error, durationMs`              | Action failed                                    |
- *
- * @example
- * ```ts
- * const cb = new CircuitBreaker({ name: 'payments-service', timeoutMs: 3_000 });
- *
- * cb.on('open',    ()          => metrics.increment('circuit.open'));
- * cb.on('success', (_, ms)    => metrics.timing('latency', ms));
- * cb.on('failure', (err)      => logger.warn(err));
- *
- * const result = await cb.execute(() => fetch('/api/charge'), {
- *   fallback: () => Promise.resolve(cachedValue),
- * });
- * ```
+ * Async circuit breaker with pluggable strategies; emits `open` / `close` / `halfOpen` / `success` / `failure` / `timeout` / `fallback` / `reject`.
  */
 export class CircuitBreaker extends EventEmitter {
-  // ── State ──────────────────────────────────────────────────────────────────
   private _state: CircuitState = 'closed';
   private _openedAt = 0;
-  /** Timestamp (ms epoch) of the last counted breaking failure; `0` if none occurred. */
   private _lastBreakingFailureAt = 0;
   private _isShutdown = false;
-  /** Consecutive failure counter — reset to 0 on any successful execution. */
   private consecutiveFailureCount = 0;
 
-  // ── Strategies ─────────────────────────────────────────────────────────────
   private readonly _name: string;
   private readonly breakingStrategy: IBreakingStrategy;
   private readonly resetStrategy: IResetStrategy;
   private readonly failureDetectionStrategy: IFailureDetector;
 
-  // ── Timeout / AbortController ───────────────────────────────────────────────
   private readonly timeoutMs?: number;
   private readonly _autoRenewAbortController: boolean;
   private _abortController?: AbortController;
 
-  // ── Rolling window stats ───────────────────────────────────────────────────
   private readonly windowMs: number;
   private readonly bucketCount: number;
   private readonly bucketDurationMs: number;
   private buckets: StatsBucket[];
   private currentBucketIndex: number;
 
+  /** Builds a breaker with optional strategies, timeouts, and rolling-window tuning. */
   constructor(options: CircuitBreakerOptions) {
     super();
     this._name = options.name;
@@ -176,72 +99,37 @@ export class CircuitBreaker extends EventEmitter {
     this.currentBucketIndex = this.bucketCount - 1;
   }
 
-  // ── Public getters ─────────────────────────────────────────────────────────
-
-  /** Returns the current state of the circuit. */
+  /** Current `closed` / `open` / `half-open` state. */
   getState(): CircuitState {
     return this._state;
   }
 
-  /**
-   * The `name` from {@link CircuitBreakerOptions}; used when registering breakers with
-   * health aggregators and in error messages.
-   */
+  /** Stable id for logs, health, and {@link CircuitOpenError}. */
   get name(): string {
     return this._name;
   }
 
-  /**
-   * Counted consecutive failures since the last successful execution (breaker bookkeeping).
-   *
-   * @see {@link getWindowStats} for rolling-window aggregates.
-   */
+  /** Consecutive breaking failures since the last success (not the rolling window). */
   getConsecutiveFailureCount(): number {
     return this.consecutiveFailureCount;
   }
 
-  /**
-   * Timestamp (ms epoch) of the last **counted** breaking failure recorded by this breaker,
-   * or `0` if none have occurred yet in this process.
-   */
+  /** Epoch ms of the last counted breaking failure, or `0`. */
   getLastBreakingFailureAt(): number {
     return this._lastBreakingFailureAt;
   }
 
-  /** `true` after {@link shutdown} has been called; subsequent `execute` calls throw immediately. */
+  /** After {@link shutdown}, `execute` throws immediately. */
   get isShutdown(): boolean {
     return this._isShutdown;
   }
 
-  /**
-   * The current `AbortController` instance.
-   * When `autoRenewAbortController` is `true` this reference is updated on every
-   * CLOSED / HALF_OPEN transition.
-   */
+  /** Optional controller aborted on timeout; renewed when `autoRenewAbortController` and state changes. */
   get abortController(): AbortController | undefined {
     return this._abortController;
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
-
-  /**
-   * Executes `action` inside the circuit breaker.
-   *
-   * - Throws {@link CircuitOpenError} (or calls `options.fallback`) when the circuit is OPEN.
-   * - Throws {@link TimeoutError} (or calls `options.fallback`) when `timeoutMs` is exceeded.
-   * - On timeout, calls `abortController.abort()` if an AbortController is configured.
-   *
-   * @param action  - Async factory for the protected operation.
-   * @param options - Optional per-call settings (fallback factory).
-   * @returns The result of `action`, or the return value of `fallback` when provided.
-   *
-   * @example
-   * ```ts
-   * const data = await cb.execute(() => fetchUser(id), {
-   *   fallback: () => Promise.resolve(defaultUser),
-   * });
-   * ```
-   */
+  /** Runs `action` through the breaker (timeout, detector, fallback, events). */
   async execute<T>(action: () => Promise<T>, options?: ExecuteOptions<T>): Promise<T> {
     if (this._isShutdown) {
       throw new Error(`CircuitBreaker "${this._name}" has been shut down.`);
@@ -298,10 +186,7 @@ export class CircuitBreaker extends EventEmitter {
     }
   }
 
-  /**
-   * Manually resets the circuit to the CLOSED state and emits `'close'`.
-   * Useful for administrative recovery or testing.
-   */
+  /** Forces CLOSED and clears counters (admin / tests). */
   reset(): void {
     this.resetStrategy.onCircuitRecovered?.();
     this._state = 'closed';
@@ -317,36 +202,13 @@ export class CircuitBreaker extends EventEmitter {
     }
   }
 
-  /**
-   * Permanently disables this circuit breaker and removes all event listeners.
-   * Subsequent calls to {@link execute} throw immediately.
-   *
-   * @example
-   * ```ts
-   * // Graceful shutdown
-   * process.on('SIGTERM', () => cb.shutdown());
-   * ```
-   */
+  /** Disables the breaker and clears listeners; further `execute` throws. */
   shutdown(): void {
     this._isShutdown = true;
     this.removeAllListeners();
   }
 
-  /**
-   * Seeds the circuit breaker state from a persisted snapshot.
-   *
-   * Intended for serverless environments where the breaker is recreated on every
-   * cold start and state must be restored from external storage (e.g. Redis).
-   * Does **not** emit any events.
-   *
-   * @param state - Partial snapshot; only provided fields are applied.
-   *
-   * @example
-   * ```ts
-   * const raw = await redis.get('cb:payments');
-   * if (raw) cb.initializeState(JSON.parse(raw));
-   * ```
-   */
+  /** Applies external state without emitting events (serverless / Redis restore). */
   initializeState(state: Partial<ICircuitStats>): void {
     if (state.state !== undefined) {
       this._state = state.state;
@@ -359,19 +221,7 @@ export class CircuitBreaker extends EventEmitter {
     }
   }
 
-  /**
-   * Returns aggregated statistics from the current rolling window.
-   *
-   * The window covers the last `windowMs` milliseconds divided into `bucketCount`
-   * buckets; each bucket is `windowMs / bucketCount` milliseconds wide. Buckets
-   * outside the window are excluded automatically.
-   *
-   * @example
-   * ```ts
-   * const { errorRate } = cb.getWindowStats();
-   * if (errorRate > 0.5) alert('high error rate');
-   * ```
-   */
+  /** Rolling-window success/failure counts and fractional error rate. */
   getWindowStats(): WindowStats {
     const windowStart = Date.now() - this.windowMs;
     let successes = 0;
@@ -393,8 +243,6 @@ export class CircuitBreaker extends EventEmitter {
     };
   }
 
-  // ── Private helpers ────────────────────────────────────────────────────────
-
   private static makeBuckets(count: number, bucketDurationMs: number): StatsBucket[] {
     const now = Date.now();
     return Array.from({ length: count }, (_, i) => ({
@@ -404,10 +252,7 @@ export class CircuitBreaker extends EventEmitter {
     }));
   }
 
-  /**
-   * Returns the bucket that covers `Date.now()`, advancing the ring buffer
-   * and zeroing stale buckets as needed.
-   */
+  /** Advances the ring buffer so `Date.now()` falls in the active bucket. */
   private currentBucket(): StatsBucket {
     const now = Date.now();
     let bucket = this.buckets[this.currentBucketIndex];
@@ -457,11 +302,9 @@ export class CircuitBreaker extends EventEmitter {
     };
   }
 
-  /**
-   * Promotes to OPEN when strategies demand it — separate from rejecting calls once already open.
-   */
+  /** Opens the circuit when the strategy demands it (may run while half-open). */
   private applyBreakingDecision(context: BreakingStrategyContext): void {
-    /* istanbul ignore if — guarded for concurrent executions that trip the breaker elsewhere */
+    /* istanbul ignore if — another path may have opened the circuit concurrently */
     if (this._state === 'open') {
       return;
     }
@@ -484,9 +327,6 @@ export class CircuitBreaker extends EventEmitter {
     }
   }
 
-  /**
-   * Emits `'failure'` (and `'timeout'` for timeouts) plus applies fallback bookkeeping.
-   */
   private async finalizeBreakingInvocation<T>(
     durationMs: number,
     error: Error,

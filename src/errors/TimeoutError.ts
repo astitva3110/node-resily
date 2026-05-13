@@ -1,10 +1,7 @@
 import { ResilyError } from './ResilyError';
 
-/**
- * Thrown when a protected operation exceeds the configured timeout duration.
- */
+/** Action exceeded the configured time limit. */
 export class TimeoutError extends ResilyError {
-  /** The timeout limit in milliseconds that was exceeded. */
   public readonly timeoutMs: number;
 
   constructor(timeoutMs: number) {

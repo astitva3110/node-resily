@@ -5,13 +5,11 @@ import type {
 } from '../core/CircuitBreaker';
 import type { IHealthStatus, IHealthSummary, IHealthWindowStats } from '../interfaces/IHealthStatus';
 
-/** Optional label for diagnostics (not surfaced in summaries). */
+/** Optional registry label for operators (not included in summaries). */
 export interface ResilienceHealthOptions {
-  /** Friendly name identifying this aggregator instance (e.g. `"edge-gateway"`). */
   name?: string;
 }
 
-/** Maps internal breaker state to externally published uppercase codes. */
 function toHealthCircuitState(state: CircuitState): IHealthStatus['state'] {
   switch (state) {
     case 'closed':
@@ -31,23 +29,7 @@ function windowFractionToPercentage(fraction: number): number {
   return fraction * 100;
 }
 
-/**
- * Registry that observes multiple {@link CircuitBreaker} instances and aggregates their health signals.
- *
- * Tracks each breaker’s uptime from the instant it is registered onward; every breaker event
- * (`open`, `close`, `halfOpen`) resets that breaker’s uptime clock.
- *
- * @example
- * ```ts
- * const health = new ResilienceHealth();
- *
- * health
- *   .register(paymentBreaker)
- *   .register(inventoryBreaker);
- *
- * console.log(health.isHealthy()); // Only when every breaker is CLOSED.
- * ```
- */
+/** Registers {@link CircuitBreaker} instances and aggregates health (`getSummary`, `isHealthy`). */
 export class ResilienceHealth {
   private readonly registryLabel?: string;
 
@@ -57,19 +39,12 @@ export class ResilienceHealth {
 
   private readonly onStateChangeHandlers = new Map<string, () => void>();
 
-  /**
-   * @param options - Optional label for observability overlays.
-   */
+  /** Optional `name` for operators (not part of summary payloads). */
   constructor(options: ResilienceHealthOptions = {}) {
     this.registryLabel = options.name;
   }
 
-  /**
-   * Fluent registration hook that wires breaker lifecycle listeners.
-   *
-   * @throws Error When a breaker whose `name` is already registered joins the roster.
-   * @returns The same aggregator instance (`this`) for chaining.
-   */
+  /** Subscribes to state events; throws on duplicate `breaker.name`. */
   register(breaker: CircuitBreaker): this {
     const { name } = breaker;
 
@@ -87,7 +62,7 @@ export class ResilienceHealth {
     breaker.on('close', recordTransition);
     breaker.on('halfOpen', recordTransition);
 
-    recordTransition(); // Initialise uptime anchor at registration.
+    recordTransition();
 
     this.registry.set(name, breaker);
     this.onStateChangeHandlers.set(name, recordTransition);
@@ -95,14 +70,12 @@ export class ResilienceHealth {
     return this;
   }
 
-  /** Human-friendly label configured at construction — useful for correlating dashboards. */
+  /** Optional label from constructor. */
   get registryName(): string | undefined {
     return this.registryLabel;
   }
 
-  /**
-   * Detaches telemetry listeners without touching breaker runtime state beyond listener removal.
-   */
+  /** Removes listeners and drops the breaker from aggregation. */
   unregister(name: string): void {
     const breaker = this.registry.get(name);
     if (breaker === undefined) {
@@ -122,11 +95,7 @@ export class ResilienceHealth {
     this.lastTransitionAtMs.delete(name);
   }
 
-  /**
-   * Returns a single breaker snapshot keyed by canonical `CircuitBreaker.name`.
-   *
-   * @throws RangeError When the alias is absent from the roster.
-   */
+  /** Live snapshot for a registered `name`; throws if unknown. */
   getStatus(name: string): IHealthStatus {
     const breaker = this.registry.get(name);
     if (breaker === undefined) {
@@ -135,16 +104,14 @@ export class ResilienceHealth {
     return ResilienceHealth.buildStatus(breaker, this.computeUptimeMs(name));
   }
 
-  /** Materialises every breaker in registration order (`Map` iteration semantics). */
+  /** All breakers in registration order. */
   getAll(): IHealthStatus[] {
     return [...this.registry.values()].map((breaker) =>
       ResilienceHealth.buildStatus(breaker, this.computeUptimeMs(breaker.name)),
     );
   }
 
-  /**
-   * Aggregated dashboard payload with overall status derived from constituent circuits.
-   */
+  /** Rolled-up status plus per-breaker rows. */
   getSummary(): IHealthSummary {
     const services = this.getAll();
     const opened = services.filter((service) => service.state === 'OPEN').length;
@@ -153,7 +120,7 @@ export class ResilienceHealth {
     const totalBreakers = services.length;
 
     if (totalBreakers === 0) {
-      status = 'healthy'; // Vacuous OK — operators may treat zero coverage separately.
+      status = 'healthy';
     } else if (opened === totalBreakers) {
       status = 'critical';
     } else if (opened === 0) {
@@ -173,24 +140,18 @@ export class ResilienceHealth {
     };
   }
 
-  /**
-   * Strict readiness helper — shorthand for callers that only care if every breaker is CLOSED.
-   */
+  /** True when every registered breaker is CLOSED. */
   isHealthy(): boolean {
     const snap = this.getAll();
 
     return snap.every((circuit) => circuit.state === 'CLOSED');
   }
 
-  /** Materialises uptime from the breaker’s personalised transition watermark. */
   private computeUptimeMs(name: string): number {
     const anchorMs = this.lastTransitionAtMs.get(name) ?? Date.now();
     return Math.max(0, Date.now() - anchorMs);
   }
 
-  /**
-   * Projects `CircuitBreaker` primitives into outward-facing payloads (percent rounding via JS number).
-   */
   private static buildStatus(breaker: CircuitBreaker, uptimeMs: number): IHealthStatus {
     const breakerState = breaker.getState();
     const window = breaker.getWindowStats();

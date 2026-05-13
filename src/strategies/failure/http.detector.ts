@@ -1,32 +1,16 @@
 import { TimeoutError } from '../../errors/TimeoutError';
 import type { IFailureDetector } from '../../interfaces/IFailureDetectionStrategy';
 
-/**
- * Configuration for {@link HttpFailureDetector}.
- */
+/** HTTP status on errors or `{ status, statusCode }` results; configurable lists and `TimeoutError` handling. */
 export interface HttpFailureDetectorConfig {
-  /** Explicit HTTP statuses that count as counted failures when present on thrown errors / results. */
   failOnStatusCodes?: readonly number[];
-
-  /** Status codes that never count as failures even if they normally would. */
   ignoreStatusCodes?: readonly number[];
-
-  /**
-   * Error classes that never count as failures when `instanceof` matches.
-   * Example: ignore validation errors emitted as HTTP-ish errors by some clients.
-   */
   ignoreErrors?: ReadonlyArray<new (...args: never[]) => Error>;
-
-  /**
-   * Whether {@link TimeoutError} instances should count as failures.
-   * @defaultValue true
-   */
   failOnTimeout?: boolean;
 }
 
 const DEFAULT_FAIL_ON_STATUS: readonly number[] = [500, 502, 503, 504];
 
-/** HTTP-oriented failure classifier for circuits wrapping fetch/axios-style APIs. */
 export class HttpFailureDetector implements IFailureDetector {
   private readonly failOnStatusCodes: readonly number[];
 
@@ -36,9 +20,7 @@ export class HttpFailureDetector implements IFailureDetector {
 
   private readonly failOnTimeout: boolean;
 
-  /**
-   * @param config - Optional HTTP status allow/deny overrides.
-   */
+  /** Applies optional status lists, ignored error types, and `TimeoutError` policy. */
   constructor(config: HttpFailureDetectorConfig = {}) {
     this.failOnStatusCodes = [...(config.failOnStatusCodes ?? DEFAULT_FAIL_ON_STATUS)];
     const ignore = config.ignoreStatusCodes ?? [];
@@ -47,7 +29,7 @@ export class HttpFailureDetector implements IFailureDetector {
     this.failOnTimeout = config.failOnTimeout ?? true;
   }
 
-  /** @inheritdoc */
+  /** Uses status on the error, 5xx defaults, and `ignoreErrors` / `ignoreStatusCodes`. */
   isFailure(error: unknown): boolean {
     if (!(error instanceof Error)) {
       return false;
@@ -79,7 +61,7 @@ export class HttpFailureDetector implements IFailureDetector {
     return true;
   }
 
-  /** @inheritdoc */
+  /** 2xx from `status` / `statusCode` on the result; permissive when absent. */
   isSuccess(result: unknown): boolean {
     const status = readHttpStatus(result);
     if (status !== undefined) {

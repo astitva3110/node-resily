@@ -1,19 +1,11 @@
 import type { IFailureDetector } from '../../interfaces/IFailureDetectionStrategy';
 
-/** gRPC statuses that imply the circuit should count a counted failure by default. */
 const GRPC_FAILURE_CODES: ReadonlySet<number> = new Set([2, 4, 8, 13, 14]);
-
-/** gRPC statuses that should explicitly not trip the breaker by default. */
 const GRPC_SAFE_CODES: ReadonlySet<number> = new Set([0, 5, 7, 16]);
 
-/**
- * Failure detector keyed on numerical `grpc` / `@grpc/grpc-js`-style `{ code }` fields.
- *
- * @remarks
- * Failure semantics follow common Node gRPC enums (e.g. `14` unavailable is failure).
- */
+/** Uses gRPC-style numeric `code` on errors and results (e.g. `@grpc/grpc-js`). */
 export class GrpcFailureDetector implements IFailureDetector {
-  /** @inheritdoc */
+  /** Maps well-known gRPC codes; non-finite codes fall back to treating errors as failures. */
   isFailure(error: unknown): boolean {
     if (!(error instanceof Error)) {
       return false;
@@ -43,7 +35,7 @@ export class GrpcFailureDetector implements IFailureDetector {
     return true;
   }
 
-  /** @inheritdoc */
+  /** `code === 0` when present; otherwise permissive. */
   isSuccess(result: unknown): boolean {
     if (
       typeof result !== 'object' ||

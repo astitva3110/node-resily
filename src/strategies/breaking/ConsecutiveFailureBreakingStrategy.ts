@@ -1,22 +1,9 @@
 import type { BreakingStrategyContext, IBreakingStrategy } from '../../interfaces/IBreakingStrategy';
 
-/**
- * Built-in breaking strategy that opens the circuit after a fixed number
- * of consecutive failures.
- *
- * @example
- * ```ts
- * const strategy = new ConsecutiveFailureBreakingStrategy(5);
- * // Circuit opens after 5 consecutive failures.
- * ```
- */
+/** Opens after N counted consecutive breaking failures. */
 export class ConsecutiveFailureBreakingStrategy implements IBreakingStrategy {
   private readonly threshold: number;
 
-  /**
-   * @param threshold - Number of consecutive failures required to open the circuit.
-   *                    Must be a positive integer.
-   */
   constructor(threshold: number) {
     if (threshold < 1) {
       throw new RangeError('threshold must be at least 1');
@@ -24,12 +11,10 @@ export class ConsecutiveFailureBreakingStrategy implements IBreakingStrategy {
     this.threshold = threshold;
   }
 
-  /** @inheritdoc */
-  afterInvoke(_durationMs: number): void {
-    // Stateless — slow-call tracking not used.
-  }
+  /** No-op; this strategy only uses the breaker’s consecutive-failure counter. */
+  afterInvoke(_durationMs: number): void {}
 
-  /** @inheritdoc */
+  /** Opens when counted consecutive failures reach `threshold`. */
   shouldOpen(context: BreakingStrategyContext): boolean {
     return (
       context.countedAsBreakingFailure &&
@@ -37,8 +22,6 @@ export class ConsecutiveFailureBreakingStrategy implements IBreakingStrategy {
     );
   }
 
-  /** @inheritdoc */
-  reset(): void {
-    // Stateless strategy — nothing to reset.
-  }
+  /** No-op; no mutable state beyond the threshold constant. */
+  reset(): void {}
 }

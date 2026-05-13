@@ -1,23 +1,13 @@
 import type { IResetStrategy, ResetStrategyContext } from '../../interfaces/IResetStrategy';
 
-/**
- * Configuration for {@link ExponentialResetStrategy}.
- */
+/** Options for {@link ExponentialResetStrategy}. */
 export interface ExponentialResetStrategyConfig {
-  /** First cooldown after failures (milliseconds). */
   initialDelayMs: number;
-
-  /** Multiplier applied to the current delay after each breaking failure notification. */
   multiplier: number;
-
-  /** Ceiling for the backoff delay (milliseconds). */
   maxDelayMs: number;
 }
 
-/**
- * Cooldown grows exponentially after counted breaking failures while the circuit stays open,
- * and resets on recovery (half-open probe success or a manual breaker `reset`).
- */
+/** Cooldown grows on `onBreakingFailure` while open; resets on recovery. */
 export class ExponentialResetStrategy implements IResetStrategy {
   private readonly multiplier: number;
 
@@ -27,9 +17,7 @@ export class ExponentialResetStrategy implements IResetStrategy {
 
   private currentDelayMs: number;
 
-  /**
-   * @param config - Initial delay, backoff factor, and cap.
-   */
+  /** Validates initial delay, multiplier ≥ 1, and `maxDelayMs` ≥ initial. */
   constructor(config: ExponentialResetStrategyConfig) {
     const { initialDelayMs, multiplier, maxDelayMs } = config;
 
@@ -51,7 +39,7 @@ export class ExponentialResetStrategy implements IResetStrategy {
     this.currentDelayMs = initialDelayMs;
   }
 
-  /** @inheritdoc */
+  /** True after `currentDelayMs` from `openedAt` or last breaking failure anchor. */
   shouldReset(openedAt: number, context?: ResetStrategyContext): boolean {
     const anchor =
       context?.lastBreakingFailureAt !== undefined &&
@@ -61,7 +49,7 @@ export class ExponentialResetStrategy implements IResetStrategy {
     return Date.now() - anchor >= this.currentDelayMs;
   }
 
-  /** @inheritdoc */
+  /** Increases delay up to `maxDelayMs` after each counted breaking failure. */
   onBreakingFailure(): void {
     this.currentDelayMs = Math.min(
       this.currentDelayMs * this.multiplier,
@@ -69,7 +57,7 @@ export class ExponentialResetStrategy implements IResetStrategy {
     );
   }
 
-  /** @inheritdoc */
+  /** Resets delay to `initialDelayMs` after close or manual reset. */
   onCircuitRecovered(): void {
     this.currentDelayMs = this.initialDelayMs;
   }

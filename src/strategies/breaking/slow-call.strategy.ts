@@ -3,29 +3,16 @@ import type {
   IBreakingStrategy,
 } from '../../interfaces/IBreakingStrategy';
 
-/**
- * Configuration for {@link SlowCallBreakingStrategy}.
- */
+/** Configuration for {@link SlowCallBreakingStrategy}. */
 export interface SlowCallBreakingStrategyConfig {
-  /** Calls taking longer than this many milliseconds count as slow. */
   slowCallDurationThreshold: number;
-
-  /**
-   * Minimum percentage of tracked calls that must be slow (0–100) to open the circuit,
-   * after {@link SlowCallBreakingStrategyConfig.minRequestCount} samples exist.
-   */
   slowCallRateThreshold: number;
-
-  /** Minimum number of sampled durations required before evaluating. */
   minRequestCount: number;
 }
 
 const MAX_DURATION_SAMPLES = 2_048;
 
-/**
- * Tracks recent call durations locally and trips the circuit when too many calls
- * are slower than a configured threshold.
- */
+/** Opens when too many recent calls exceed `slowCallDurationThreshold` (local duration ring buffer). */
 export class SlowCallBreakingStrategy implements IBreakingStrategy {
   private readonly slowCallDurationThreshold: number;
 
@@ -35,9 +22,6 @@ export class SlowCallBreakingStrategy implements IBreakingStrategy {
 
   private readonly durations: number[] = [];
 
-  /**
-   * @param config - Latency and rate thresholds.
-   */
   constructor(config: SlowCallBreakingStrategyConfig) {
     const {
       slowCallDurationThreshold,
@@ -62,7 +46,7 @@ export class SlowCallBreakingStrategy implements IBreakingStrategy {
     this.minRequestCount = minRequestCount;
   }
 
-  /** @inheritdoc */
+  /** Appends duration samples for slow-rate evaluation (capped). */
   afterInvoke(durationMs: number): void {
     this.durations.push(durationMs);
     if (this.durations.length > MAX_DURATION_SAMPLES) {
@@ -70,7 +54,7 @@ export class SlowCallBreakingStrategy implements IBreakingStrategy {
     }
   }
 
-  /** @inheritdoc */
+  /** Opens when slow calls are at least `slowCallRateThreshold` % of buffered durations. */
   shouldOpen(_context: BreakingStrategyContext): boolean {
     if (this.durations.length < this.minRequestCount) {
       return false;
@@ -84,7 +68,7 @@ export class SlowCallBreakingStrategy implements IBreakingStrategy {
     return slowPercent >= this.slowCallRateThreshold;
   }
 
-  /** @inheritdoc */
+  /** Clears sampled durations (e.g. when the breaker closes). */
   reset(): void {
     this.durations.length = 0;
   }

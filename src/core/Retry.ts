@@ -1,37 +1,27 @@
 import { MaxRetriesExceededError } from '../errors/MaxRetriesExceededError';
 import type { IRetryStrategy } from '../interfaces/IRetryStrategy';
 
-/** Options for constructing a {@link Retry} executor. */
+/** Options for {@link Retry}. */
 export interface RetryOptions {
-  /** Maximum number of retry attempts (not counting the initial call). */
   maxAttempts: number;
-  /** Pluggable strategy controlling delay and whether to retry a given error. */
   strategy?: IRetryStrategy;
 }
 
-/** Default retry strategy: retry all errors with no delay. */
 class DefaultRetryStrategy implements IRetryStrategy {
   getDelay(_attempt: number): number {
     return 0;
   }
-  shouldRetry(_error: Error, attempt: number): boolean {
+  shouldRetry(_error: Error, _attempt: number): boolean {
     return true;
   }
 }
 
-/**
- * Executes an async operation with configurable retry logic.
- *
- * @example
- * ```ts
- * const retry = new Retry({ maxAttempts: 3, strategy: new ExponentialBackoffStrategy() });
- * const data = await retry.execute(() => fetchRemoteData());
- * ```
- */
+/** Retries an async factory with a pluggable {@link IRetryStrategy}. */
 export class Retry {
   private readonly maxAttempts: number;
   private readonly strategy: IRetryStrategy;
 
+  /** `maxAttempts` is retry count after the first try (total tries = maxAttempts + 1). */
   constructor(options: RetryOptions) {
     if (options.maxAttempts < 1) {
       throw new RangeError('maxAttempts must be at least 1');
@@ -40,12 +30,7 @@ export class Retry {
     this.strategy = options.strategy ?? new DefaultRetryStrategy();
   }
 
-  /**
-   * Runs `action` up to `maxAttempts + 1` times (initial call + retries).
-   * Throws {@link MaxRetriesExceededError} when all attempts are exhausted.
-   *
-   * @param action - Async factory to execute and potentially retry.
-   */
+  /** Runs `action` until success or {@link MaxRetriesExceededError}. */
   async execute<T>(action: () => Promise<T>): Promise<T> {
     let lastError: Error = new Error('Unknown error');
 

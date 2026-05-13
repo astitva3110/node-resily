@@ -1,16 +1,13 @@
 import type { IFailureDetector } from '../../interfaces/IFailureDetectionStrategy';
 
-/**
- * Detector that treats any `Error` instance as failure and considers every resolved
- * value successful unless specialized detectors override `isSuccess`.
- */
+/** `instanceof Error` fails; all resolved values succeed. */
 export class DefaultFailureDetector implements IFailureDetector {
-  /** @inheritdoc */
+  /** True for `Error` instances. */
   isFailure(error: unknown): boolean {
     return error instanceof Error;
   }
 
-  /** @inheritdoc */
+  /** Always true unless a custom detector tightens success semantics. */
   isSuccess(_result: unknown): boolean {
     return true;
   }

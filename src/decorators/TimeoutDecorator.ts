@@ -1,19 +1,6 @@
 import { Timeout } from '../core/Timeout';
 
-/**
- * Method decorator that enforces a maximum execution time on the decorated async method.
- * Throws {@link TimeoutError} if the method takes longer than `timeoutMs`.
- *
- * @param timeoutMs - Maximum allowed duration in milliseconds.
- *
- * @example
- * ```ts
- * class ReportService {
- *   \@WithTimeout(5_000)
- *   async generateReport(): Promise<Report> { ... }
- * }
- * ```
- */
+/** Enforces `timeoutMs` on the method via {@link Timeout}; one timer per method, shared by all instances of the class. */
 export function WithTimeout(timeoutMs: number): MethodDecorator {
   return function (
     _target: object,
