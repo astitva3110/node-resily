@@ -58,17 +58,20 @@ const receipt = await breaker.execute(() =>
 ## Circuit breaker
 
 ```
-  ┌─────────────────────────────────────┐
-  │                                     │
-  │   CLOSED ──── failures ────► OPEN   │
-  │     ▲                         │     │
-  │     │                        timeout │
-  │     │                         │     │
-  │   success              HALF-OPEN     │
-  │     │                         │     │
-  │     └────── probe call ───────┘     │
-  │                                     │
-  └─────────────────────────────────────┘
+  ┌──────────────────────────────────────────────┐
+  │                                              │
+  │   CLOSED ──── threshold breached ──►  OPEN   │
+  │     ▲                                  │     │
+  │     │                            reset │     │
+  │     │                           timeout│     │
+  │     │                                  │     │
+  │  success                        HALF-OPEN    │
+  │     │                           /      \     │
+  │     └──── probe succeeds ──────┘        │    │
+  │                                         │    │
+  │              probe fails ──────────► OPEN    │
+  │                                              │
+  └──────────────────────────────────────────────┘
 ```
 
 ```ts
@@ -371,6 +374,31 @@ app.get('/health', (req, res) => {
 
 `getSummary()` returns an overall status plus per-breaker snapshots (state, window stats, consecutive failures, etc.).
 
+## Prometheus metrics
+
+Pipe circuit breaker state and counters to Prometheus/Grafana via the optional adapter. Requires `prom-client` as a peer dependency.
+
+```bash
+npm install prom-client
+```
+
+```ts
+import { Registry } from 'prom-client';
+import { PrometheusAdapter } from 'node-resily/prometheus';
+
+const registry = new Registry();
+const adapter = new PrometheusAdapter({ registry });
+
+adapter.observe(paymentBreaker);
+adapter.observe(inventoryBreaker);
+
+// Exposes these metrics:
+// node_resily_circuit_state{name="paymentService"} 0|1|2
+// node_resily_circuit_failures_total{name="paymentService"}
+// node_resily_circuit_success_total{name="paymentService"}
+// node_resily_circuit_error_rate{name="paymentService"}
+```
+
 ## Events reference
 
 | Event | When | Payload |
@@ -398,12 +426,14 @@ app.get('/health', (req, res) => {
 | `fallback` | — | — | Not on the constructor — pass to `execute(action, { fallback })` |
 | `abortController` | `AbortController` | undefined | For cancellation; aborted when `timeoutMs` fires |
 | `autoRenewAbortController` | `boolean` | `false` | Replace controller on closed / half-open transitions |
-
-Additional tuning (rolling window used by stats and error-rate breaking): `windowMs` (default `60_000`), `bucketCount` (default `10`). See `CircuitBreakerOptions` in the source if you change these.
+| `halfOpenRequests` | `number` | `1` | Concurrent probe calls allowed during half-open |
+| `successThreshold` | `number` | `1` | Consecutive successes required to close from half-open |
+| `windowMs` | `number` | `60_000` | Rolling window duration in ms (used by stats and error-rate breaking) |
+| `bucketCount` | `number` | `10` | Number of buckets the rolling window is divided into |
 
 ## Limitations
 
-- **No default exponential backoff** for `Retry`—bring an `IRetryStrategy` implementation.
+- Retry does not ship a built-in exponential backoff class — the Retry section above shows how to implement one in ~10 lines using `IRetryStrategy`.
 - The standalone **`Timeout`** class does not integrate `AbortController`; cancellation wiring lives on `CircuitBreaker`.
 - **State is in-memory** per process. Separate deployments or horizontal replicas do not share breaker state unless you add external coordination.
 - **Decorators** share one `CircuitBreaker` / `Retry` / `Timeout` **per decorated method** on the class (not per DI instance). Circuit state is shared; retry budgets and timeout races are per call — see **NestJS**.
