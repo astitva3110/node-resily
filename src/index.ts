@@ -26,3 +26,22 @@ export { ResilienceHealth } from './health';
 export type { ResilienceHealthOptions } from './health';
 
 export * from './decorators';
+
+export {
+  ResilienceModule,
+  InjectCircuitBreaker,
+  InjectRetry,
+  InjectBulkhead,
+  getCircuitBreakerToken,
+  getRetryToken,
+  getBulkheadToken,
+  RESILY_MODULE_OPTIONS,
+} from './adapters';
+
+export type {
+  CircuitBreakerModuleConfig,
+  RetryModuleConfig,
+  BulkheadModuleConfig,
+  ResilienceModuleOptions,
+  ResilienceModuleAsyncOptions,
+} from './adapters';

@@ -629,6 +629,114 @@ describe('CircuitBreaker — timeoutMs', () => {
   });
 });
 
+// ── Half-open probe control ────────────────────────────────────────────────────
+
+describe('CircuitBreaker — half-open probe control', () => {
+  it('halfOpenRequests: 3 allows up to 3 concurrent probes, rejecting a 4th', async () => {
+    const cb = new CircuitBreaker({
+      name: 'test',
+      breakingStrategy: new ConsecutiveFailureBreakingStrategy(1),
+      resetStrategy: new TimeBasedResetStrategy(0),
+      halfOpenRequests: 3,
+      successThreshold: 1,
+    });
+
+    await tripBreaker(cb);
+
+    const releasers: Array<() => void> = [];
+    const probes = [0, 1, 2].map(() => {
+      let releaseProbe!: () => void;
+      const p = cb.execute(
+        () => new Promise<void>((resolve) => { releaseProbe = resolve; }),
+      );
+      releasers.push(releaseProbe);
+      return p;
+    });
+
+    expect(cb.getState()).toBe('half-open');
+
+    await expect(cb.execute(alwaysSucceed)).rejects.toBeInstanceOf(CircuitOpenError);
+
+    releasers[0]();
+    await probes[0];
+    expect(cb.getState()).toBe('closed');
+
+    releasers[1]();
+    releasers[2]();
+    await Promise.allSettled([probes[1], probes[2]]);
+  });
+
+  it('successThreshold: 2 keeps the circuit half-open until 2 successes', async () => {
+    const cb = new CircuitBreaker({
+      name: 'test',
+      breakingStrategy: new ConsecutiveFailureBreakingStrategy(1),
+      resetStrategy: new TimeBasedResetStrategy(0),
+      halfOpenRequests: 3,
+      successThreshold: 2,
+    });
+
+    await tripBreaker(cb);
+
+    await cb.execute(alwaysSucceed);
+    expect(cb.getState()).toBe('half-open');
+
+    await cb.execute(alwaysSucceed);
+    expect(cb.getState()).toBe('closed');
+  });
+
+  it('one failure during multi-probe half-open reopens immediately', async () => {
+    const cb = new CircuitBreaker({
+      name: 'test',
+      breakingStrategy: new ConsecutiveFailureBreakingStrategy(1),
+      resetStrategy: new TimeBasedResetStrategy(0),
+      halfOpenRequests: 3,
+      successThreshold: 3,
+    });
+
+    await tripBreaker(cb);
+
+    await cb.execute(alwaysFail).catch(() => { /* expected */ });
+    expect(cb.getState()).toBe('open');
+  });
+
+  it('all probe slots exhausted without meeting successThreshold reopens the circuit', async () => {
+    let release1!: () => void;
+    let release2!: () => void;
+
+    const cb = new CircuitBreaker({
+      name: 'test',
+      breakingStrategy: new ConsecutiveFailureBreakingStrategy(1),
+      resetStrategy: new TimeBasedResetStrategy(0),
+      halfOpenRequests: 2,
+      successThreshold: 3,
+    });
+
+    await tripBreaker(cb);
+
+    const probe1 = cb.execute(() => new Promise<void>((r) => { release1 = r; }));
+    const probe2 = cb.execute(() => new Promise<void>((r) => { release2 = r; }));
+
+    // All slots used; a 3rd caller is rejected
+    await expect(cb.execute(alwaysSucceed)).rejects.toBeInstanceOf(CircuitOpenError);
+
+    // Both probes succeed, but successThreshold=3 is not met with only 2 probes
+    release1();
+    release2();
+    await Promise.all([probe1, probe2]);
+
+    expect(cb.getState()).toBe('open');
+  });
+
+  it('default behavior (halfOpenRequests: 1, successThreshold: 1) is unchanged', async () => {
+    const cb = makeInstantBreaker();
+    await tripBreaker(cb);
+
+    const result = await cb.execute(alwaysSucceed);
+    expect(result).toBe('ok');
+    expect(cb.getState()).toBe('closed');
+  });
+});
+
 // ── EventEmitter integration ───────────────────────────────────────────────────
 
 describe('CircuitBreaker — EventEmitter integration', () => {

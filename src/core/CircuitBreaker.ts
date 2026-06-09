@@ -47,6 +47,10 @@ export interface CircuitBreakerOptions {
   autoRenewAbortController?: boolean;
   windowMs?: number;
   bucketCount?: number;
+  /** Maximum concurrent half-open probes allowed before extras are rejected. Default `1`. */
+  halfOpenRequests?: number;
+  /** Consecutive successes required in half-open before the circuit closes. Default `1`. */
+  successThreshold?: number;
 }
 
 /** Per-call options for {@link CircuitBreaker.execute}. */
@@ -62,14 +66,18 @@ export class CircuitBreaker extends EventEmitter {
   private _openedAt = 0;
   private _lastBreakingFailureAt = 0;
   private _isShutdown = false;
-  /** Serializes probes so at most one `execute` runs while half-open. */
-  private _halfOpenProbeInFlight = false;
+  private _halfOpenProbesDispatched = 0;
+  private _halfOpenProbesInFlight = 0;
+  private _halfOpenSuccessCount = 0;
   private consecutiveFailureCount = 0;
 
   private readonly _name: string;
   private readonly breakingStrategy: IBreakingStrategy;
   private readonly resetStrategy: IResetStrategy;
   private readonly failureDetectionStrategy: IFailureDetector;
+
+  private readonly halfOpenRequests: number;
+  private readonly successThreshold: number;
 
   private readonly timeoutMs?: number;
   private readonly _autoRenewAbortController: boolean;
@@ -94,6 +102,8 @@ export class CircuitBreaker extends EventEmitter {
       options.resetStrategy ?? new TimeBasedResetStrategy(30_000);
     this.failureDetectionStrategy =
       options.failureDetectionStrategy ?? new DefaultFailureDetector();
+    this.halfOpenRequests = options.halfOpenRequests ?? 1;
+    this.successThreshold = options.successThreshold ?? 1;
     this.timeoutMs = options.timeoutMs;
     this._abortController = options.abortController;
     this._autoRenewAbortController = options.autoRenewAbortController ?? false;
@@ -150,12 +160,13 @@ export class CircuitBreaker extends EventEmitter {
 
     let halfOpenProbeLock = false;
     if (this._state === 'half-open') {
-      if (this._halfOpenProbeInFlight) {
+      if (this._halfOpenProbesDispatched >= this.halfOpenRequests) {
         const err = new CircuitOpenError(this._name, this._openedAt);
         this.emit('reject', err);
         return this.resolveFallback(options?.fallback, err);
       }
-      this._halfOpenProbeInFlight = true;
+      this._halfOpenProbesDispatched++;
+      this._halfOpenProbesInFlight++;
       halfOpenProbeLock = true;
     }
 
@@ -203,7 +214,21 @@ export class CircuitBreaker extends EventEmitter {
       }
     } finally {
       if (halfOpenProbeLock) {
-        this._halfOpenProbeInFlight = false;
+        if (this._state === 'half-open') {
+          this._halfOpenProbesInFlight--;
+          if (
+            this._halfOpenProbesInFlight === 0 &&
+            this._halfOpenProbesDispatched >= this.halfOpenRequests &&
+            this._halfOpenSuccessCount < this.successThreshold
+          ) {
+            this._state = 'open';
+            this._openedAt = Date.now();
+            this.emit('open');
+          }
+        } else {
+          // closed (reset() was called) or open (failure reopened it): keep counter non-negative
+          this._halfOpenProbesInFlight = Math.max(0, this._halfOpenProbesInFlight - 1);
+        }
       }
     }
   }
@@ -214,7 +239,9 @@ export class CircuitBreaker extends EventEmitter {
     this._state = 'closed';
     this._openedAt = 0;
     this._lastBreakingFailureAt = 0;
-    this._halfOpenProbeInFlight = false;
+    this._halfOpenProbesDispatched = 0;
+    this._halfOpenProbesInFlight = 0;
+    this._halfOpenSuccessCount = 0;
     this.consecutiveFailureCount = 0;
     this.breakingStrategy.reset();
     this.buckets = CircuitBreaker.makeBuckets(this.bucketCount, this.bucketDurationMs);
@@ -307,6 +334,9 @@ export class CircuitBreaker extends EventEmitter {
 
     if (this.resetStrategy.shouldReset(this._openedAt, resetContext)) {
       this._state = 'half-open';
+      this._halfOpenProbesDispatched = 0;
+      this._halfOpenProbesInFlight = 0;
+      this._halfOpenSuccessCount = 0;
       this.emit('halfOpen');
       if (this._autoRenewAbortController) {
         this._abortController = new AbortController();
@@ -346,7 +376,10 @@ export class CircuitBreaker extends EventEmitter {
     this.consecutiveFailureCount = 0;
 
     if (this._state === 'half-open') {
-      this.reset();
+      this._halfOpenSuccessCount++;
+      if (this._halfOpenSuccessCount >= this.successThreshold) {
+        this.reset();
+      }
     }
   }
 
@@ -363,13 +396,20 @@ export class CircuitBreaker extends EventEmitter {
       this.resetStrategy.onBreakingFailure?.();
     }
 
-    this.applyBreakingDecision({
-      consecutiveFailures: this.consecutiveFailureCount,
-      windowStats: this.breakingWindowSnapshot(),
-      durationMs,
-      countedAsBreakingFailure: countedBreakingFailure,
-      error,
-    });
+    // Any counted failure during a half-open probe reopens immediately without consulting the strategy.
+    if (this._state === 'half-open' && countedBreakingFailure) {
+      this._state = 'open';
+      this._openedAt = Date.now();
+      this.emit('open');
+    } else {
+      this.applyBreakingDecision({
+        consecutiveFailures: this.consecutiveFailureCount,
+        windowStats: this.breakingWindowSnapshot(),
+        durationMs,
+        countedAsBreakingFailure: countedBreakingFailure,
+        error,
+      });
+    }
 
     if (error instanceof TimeoutError) {
       this.emit('timeout', error);

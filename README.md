@@ -3,7 +3,7 @@
 > Resilience patterns for Node.js microservices — circuit breaker, retry, timeout, and bulkhead with pluggable strategies.
 
 [![npm version](https://img.shields.io/npm/v/node-resily.svg)](https://www.npmjs.com/package/node-resily)
-[![npm downloads](https://img.shields.io/npm/dm/node-resily.svg)](https://www.npmjs.com/package/node-resily)
+[![npm downloads](https://img.shields.io/npm/dw/node-resily.svg)](https://www.npmjs.com/package/node-resily)
 [![CI](https://github.com/astitva3110/node-resily/workflows/CI/badge.svg)](https://github.com/astitva3110/node-resily/actions)
 [![coverage](https://img.shields.io/badge/coverage-threshold_≥90%25-2ea44f)](https://github.com/astitva3110/node-resily/blob/main/jest.config.ts)
 [![license](https://img.shields.io/npm/l/node-resily.svg)](https://github.com/astitva3110/node-resily/blob/main/package.json)
@@ -14,7 +14,7 @@ One downstream service starts failing. Callers wait, thread pools fill up, retri
 
 ## Why node-resily
 
-| Feature | Other library | node-resily |
+| Feature | opossum | node-resily |
 |---------|---------|--------|
 | Circuit breaker | ✅ | ✅ |
 | EventEmitter events | ✅ | ✅ |
@@ -218,7 +218,7 @@ class MyBreakingStrategy implements IBreakingStrategy {
 
 ## Retry
 
-There is **no** bundled exponential backoff class—you implement `IRetryStrategy` or paste a small helper. That keeps core dependency-free and avoids prescribing one backoff policy for every team.
+Retry strategy is fully pluggable — implement `IRetryStrategy` to define your own backoff logic. Example exponential backoff:
 
 ```ts
 import { CircuitBreaker, Retry } from 'node-resily';
@@ -278,15 +278,7 @@ A bulkhead caps how many concurrent calls may hit a fragile dependency; excess w
 
 Requires `experimentalDecorators` and `emitDecoratorMetadata` in `tsconfig`.
 
-Each decorator installs **one** underlying primitive for that **method** on the class, and that same instance is reused for **every** instance of the class you create.
-
-- **`@WithCircuitBreaker`** — The shared `CircuitBreaker` keeps real state: failure counts, open / closed / half-open, and window stats. A failure (or trip) on **any** instance counts toward opening the circuit for **all** instances using that method. That matches how you usually run a **singleton** NestJS service: one logical dependency, one breaker.
-
-- **`@WithRetry`** — The `Retry` instance is shared, but `Retry` does **not** carry state between `execute()` calls. Each invocation of the method gets a **fresh** attempt budget from `maxAttempts`. Two different instances (or two concurrent calls) do not “use up” each other’s retries.
-
-- **`@WithTimeout`** — The `Timeout` instance is shared; each method call still **races its own** in-flight work against the configured delay. Per-call timing is independent.
-
-In short: breaker state is global to the class method; retry and timeout share the helper object but treat each call’s timing and retry loop separately.
+@WithCircuitBreaker shares circuit state across all instances of the decorated class — failures on one instance count toward tripping the breaker for all instances. @WithRetry and @WithTimeout share the instance but per-call state is independent — each call gets its own attempt budget.
 
 ```ts
 import { Injectable } from '@nestjs/common';
