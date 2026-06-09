@@ -3,7 +3,7 @@
 > Resilience patterns for Node.js microservices — circuit breaker, retry, timeout, and bulkhead with pluggable strategies.
 
 [![npm version](https://img.shields.io/npm/v/node-resily.svg)](https://www.npmjs.com/package/node-resily)
-[![npm downloads](https://img.shields.io/npm/dw/node-resily.svg)](https://www.npmjs.com/package/node-resily)
+[![npm downloads](https://img.shields.io/npm/dm/node-resily.svg)](https://www.npmjs.com/package/node-resily)
 [![CI](https://github.com/astitva3110/node-resily/workflows/CI/badge.svg)](https://github.com/astitva3110/node-resily/actions)
 [![coverage](https://img.shields.io/badge/coverage-threshold_≥90%25-2ea44f)](https://github.com/astitva3110/node-resily/blob/main/jest.config.ts)
 [![license](https://img.shields.io/npm/l/node-resily.svg)](https://github.com/astitva3110/node-resily/blob/main/package.json)
@@ -34,7 +34,7 @@ One downstream service starts failing. Callers wait, thread pools fill up, retri
 | Health monitoring | ❌ | ✅ |
 | TypeScript first | ⚠️ types via @types | ✅ native |
 
-Comparison is about shipped features in this library vs other library; both are valid tools—pick based on what you need to configure and compose.
+Comparison against opossum's shipped feature set. Both are valid tools — pick node-resily when you need pluggable strategies or the additional patterns.
 
 ## Installation
 
@@ -302,6 +302,49 @@ export class PaymentService {
   @WithTimeout(5_000)
   async processPayment(amount: number) {
     return this.http.post('/payment', { amount });
+  }
+}
+```
+
+### ResilienceModule (NestJS DI)
+
+Register breakers, retries, and bulkheads centrally and inject them anywhere in your NestJS app:
+
+```ts
+import { Injectable, Module } from '@nestjs/common';
+import {
+  ResilienceModule,
+  InjectCircuitBreaker,
+  ConsecutiveFailureBreakingStrategy,
+  HttpFailureDetector,
+} from 'node-resily';
+import type { CircuitBreaker } from 'node-resily';
+
+@Module({
+  imports: [
+    ResilienceModule.forRoot({
+      circuitBreakers: [
+        {
+          name: 'paymentService',
+          breakingStrategy: new ConsecutiveFailureBreakingStrategy(3),
+          failureDetectionStrategy: new HttpFailureDetector(),
+          timeoutMs: 3_000,
+        },
+      ],
+    }),
+  ],
+})
+export class AppModule {}
+
+@Injectable()
+export class PaymentService {
+  constructor(
+    @InjectCircuitBreaker('paymentService')
+    private readonly breaker: CircuitBreaker,
+  ) {}
+
+  async charge() {
+    return this.breaker.execute(() => this.httpClient.post(...));
   }
 }
 ```
