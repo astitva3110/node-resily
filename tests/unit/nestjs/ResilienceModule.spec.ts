@@ -2,7 +2,7 @@ import 'reflect-metadata';
 
 jest.mock('@nestjs/common', () => ({
   Module: jest.fn(() => (): ClassDecorator => () => {}),
-  Inject: jest.fn((token: string) => (): ParameterDecorator => (): void => {}),
+  Inject: jest.fn((_token: string) => (): ParameterDecorator => (): void => {}),
 }));
 
 import * as nestCommon from '@nestjs/common';

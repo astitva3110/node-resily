@@ -23,7 +23,7 @@ module.exports = {
       env: { node: true, jest: true },
     },
     {
-      files: ['src/adapters/**/*.ts'],
+      files: ['src/adapters/**/*.ts', 'src/prometheus/**/*.ts'],
       rules: {
         '@typescript-eslint/no-require-imports': 'off',
         '@typescript-eslint/no-var-requires': 'off',
